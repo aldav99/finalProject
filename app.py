@@ -1,9 +1,9 @@
 """
 Telegram-бот "Сыр к вину"
-Стек: Python + pyTelegramBotAPI (telebot)
+Стек: Python + pyTelegramBotAPI (telebot) + Flask (для Render.com)
 
 Установка зависимостей:
-    pip install pyTelegramBotAPI python-dotenv
+    pip install pyTelegramBotAPI python-dotenv flask
 
 Запуск:
     1. Получите токен у @BotFather
@@ -15,7 +15,9 @@ Telegram-бот "Сыр к вину"
 import logging
 import os
 import re
+import threading
 import telebot
+from flask import Flask
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
@@ -26,7 +28,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     handlers=[
-        logging.StreamHandler(),                              # вывод в консоль
+        logging.StreamHandler(),  # вывод в консоль
         logging.FileHandler("wine_cheese_bot.log", encoding="utf-8"),  # вывод в файл
     ],
 )
@@ -53,6 +55,35 @@ CHANNEL_USERNAME = "@wine_and_cheese_guide"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
+# ---------------------------------------------------------------------------
+# Flask-приложение для Render.com (чтобы сервис не засыпал и не падал)
+# ---------------------------------------------------------------------------
+
+flask_app = Flask('')
+
+
+@flask_app.route('/')
+def home():
+    """Минимальный эндпоинт, чтобы Render видел активность на порту."""
+    return "🍷🧀 Wine & Cheese Bot is running!"
+
+
+@flask_app.route('/health')
+def health():
+    """Эндпоинт для проверки здоровья (можно использовать для Uptime Robot)."""
+    return {"status": "ok", "message": "Bot is alive"}
+
+
+def run_web_server():
+    """Запускает Flask-сервер в отдельном потоке."""
+    port = int(os.environ.get('PORT', 8000))
+    logger.info(f"Запуск веб-сервера на порту {port}...")
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+
+# ---------------------------------------------------------------------------
+# Функции для работы с Markdown
+# ---------------------------------------------------------------------------
 
 def escape_md(text: str) -> str:
     """
@@ -229,7 +260,7 @@ wine_cheese_pairings = [
 
 # Список названий вин для приветственного и fallback-сообщений (в исходном порядке + "Другое")
 WINE_LIST_TEXT = ("Каберне Совиньон, Пино Нуар, Шардоне, Рислинг, Мерло, Зинфандель, "
-                   "Сира, Совиньон Блан, Пино Гриджо, Кьянти, Розе, Портвейн, Другое")
+                  "Сира, Совиньон Блан, Пино Гриджо, Кьянти, Розе, Портвейн, Другое")
 
 # ---------------------------------------------------------------------------
 # Индекс для поиска без учета регистра
@@ -340,7 +371,7 @@ def build_pairing_response(item: dict) -> str:
         return response
     except (KeyError, TypeError, AttributeError) as exc:
         logger.error("Ошибка формирования ответа для вина '%s': %s",
-                      item.get("wine", "неизвестно"), exc)
+                     item.get("wine", "неизвестно"), exc)
         return (
             "Упс, не получилось сформировать подробную рекомендацию 😔\n"
             "Попробуй, пожалуйста, ещё раз или выбери другое вино из списка."
@@ -388,7 +419,7 @@ def safe_send(chat_id, text, **kwargs):
 def handle_start(message):
     try:
         logger.info("Команда /start от chat_id=%s (user=%s)",
-                     message.chat.id, message.from_user.username)
+                    message.chat.id, message.from_user.username)
         safe_send(message.chat.id, START_TEXT, disable_web_page_preview=True)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Ошибка в обработчике /start: %s", exc)
@@ -399,7 +430,7 @@ def handle_message(message):
     try:
         user_text = message.text.strip().lower()
         logger.info("Сообщение от chat_id=%s (user=%s): %r",
-                     message.chat.id, message.from_user.username, message.text)
+                    message.chat.id, message.from_user.username, message.text)
 
         if user_text == "другое":
             safe_send(message.chat.id, OTHER_WINE_TEXT, disable_web_page_preview=True)
@@ -437,6 +468,13 @@ def handle_message(message):
 
 if __name__ == "__main__":
     logger.info("Бот запущен...")
+
+    # Запускаем Flask-сервер в отдельном потоке
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    logger.info("Веб-сервер запущен в фоновом потоке")
+
+    # Запускаем бота (основной поток)
     try:
         bot.infinity_polling(skip_pending=True)
     except Exception as exc:  # noqa: BLE001 - логируем фатальные ошибки перед остановкой

@@ -5,11 +5,11 @@ Telegram-бот "Сыр к вину"
 Установка зависимостей:
     pip install pyTelegramBotAPI python-dotenv flask
 
-Запуск:
-    1. Получите токен у @BotFather
-    2. Создайте файл .env рядом со скриптом и добавьте в него строку:
-           BOT_TOKEN=ваш_токен_бота
-    3. python wine_cheese_bot.py
+Запуск на Render:
+    Start Command: gunicorn wine_cheese_bot:flask_app
+
+Запуск локально:
+    python wine_cheese_bot.py
 """
 
 import logging
@@ -75,7 +75,7 @@ def health():
 
 
 def run_web_server():
-    """Запускает Flask-сервер в отдельном потоке."""
+    """Запускает Flask-сервер (используется при локальном запуске)."""
     port = int(os.environ.get('PORT', 8000))
     logger.info(f"Запуск веб-сервера на порту {port}...")
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
@@ -463,22 +463,30 @@ def handle_message(message):
 
 
 # ---------------------------------------------------------------------------
-# Запуск
+# Запуск бота в отдельном потоке (для Gunicorn)
+# ---------------------------------------------------------------------------
+
+def run_bot():
+    """Запускает Telegram-бота в отдельном потоке."""
+    logger.info("Запуск Telegram-бота...")
+    try:
+        bot.infinity_polling(skip_pending=True)
+    except Exception as exc:
+        logger.critical(f"Бот аварийно завершил работу: {exc}")
+        raise
+
+
+# Запускаем бота в фоновом потоке при импорте модуля (для Gunicorn)
+bot_thread = threading.Thread(target=run_bot, daemon=True)
+bot_thread.start()
+logger.info("Telegram-бот запущен в фоновом потоке")
+
+# ---------------------------------------------------------------------------
+# Запуск при локальном выполнении
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    logger.info("Бот запущен...")
-
-    # Запускаем Flask-сервер в отдельном потоке
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    logger.info("Веб-сервер запущен в фоновом потоке")
-
-    # Запускаем бота (основной поток)
-    try:
-        bot.infinity_polling(skip_pending=True)
-    except Exception as exc:  # noqa: BLE001 - логируем фатальные ошибки перед остановкой
-        logger.critical("Бот аварийно завершил работу: %s", exc)
-        raise
-    finally:
-        logger.info("Бот остановлен.")
+    logger.info("Запуск через python wine_cheese_bot.py")
+    # Запускаем Flask (для локальной разработки)
+    port = int(os.environ.get('PORT', 8000))
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
